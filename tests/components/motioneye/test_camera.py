@@ -273,10 +273,25 @@ async def test_get_still_image_without_camera(hass: HomeAssistant) -> None:
     client.async_get_camera_snapshot.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "streaming_credentials",
+    [
+        pytest.param({"streaming_username": "camera_user"}, id="password_omitted"),
+        pytest.param(
+            {"streaming_username": "camera_user", "streaming_password": "*****"},
+            id="password_masked",
+        ),
+    ],
+)
 async def test_get_stream_from_camera(
-    aiohttp_server: Callable[[], TestServer], hass: HomeAssistant
+    aiohttp_server: Callable[[], TestServer],
+    hass: HomeAssistant,
+    streaming_credentials: dict[str, str],
 ) -> None:
-    """Test getting a stream."""
+    """Test the stream authenticates with the configured credentials.
+
+    motionEye never returns the real streaming password.
+    """
     authorization = None
 
     async def stream_handler(request: web.Request) -> web.Response:
@@ -302,8 +317,7 @@ async def test_get_stream_from_camera(
         },
     )
     cameras = copy.deepcopy(TEST_CAMERAS)
-    cameras[KEY_CAMERAS][0]["streaming_username"] = "camera_user"
-    cameras[KEY_CAMERAS][0]["streaming_password"] = "camera_password"
+    cameras[KEY_CAMERAS][0].update(streaming_credentials)
     client.async_get_cameras = AsyncMock(return_value=cameras)
     await setup_mock_motioneye_config_entry(
         hass, config_entry=config_entry, client=client
@@ -311,50 +325,7 @@ async def test_get_stream_from_camera(
     await hass.async_block_till_done()
 
     await async_get_mjpeg_stream(hass, MockRequest(b"", "test"), TEST_CAMERA_ENTITY_ID)
-    assert authorization == "Basic Y2FtZXJhX3VzZXI6Y2FtZXJhX3Bhc3N3b3Jk"
-
-
-async def test_get_stream_from_camera_falls_back_to_surveillance_credentials(
-    aiohttp_server: Callable[[], TestServer], hass: HomeAssistant
-) -> None:
-    """Test stream auth falls back to global surveillance credentials."""
-    authorization = None
-
-    async def stream_handler(request: web.Request) -> web.Response:
-        nonlocal authorization
-        authorization = request.headers.get("Authorization")
-        return web.Response(body="")
-
-    app = web.Application()
-    app.add_routes([web.get("/", stream_handler)])
-    stream_server = await aiohttp_server(app)
-
-    client = create_mock_motioneye_client()
-    client.get_camera_stream_url = Mock(
-        return_value=f"http://127.0.0.1:{stream_server.port}/"
-    )
-
-    config_entry = create_mock_motioneye_config_entry(
-        hass,
-        data={
-            CONF_URL: f"http://127.0.0.1:{stream_server.port}",
-            CONF_SURVEILLANCE_USERNAME: "user",
-            CONF_SURVEILLANCE_PASSWORD: "password",
-        },
-    )
-
-    cameras = copy.deepcopy(TEST_CAMERAS)
-    cameras[KEY_CAMERAS][0]["streaming_username"] = ""
-    cameras[KEY_CAMERAS][0]["streaming_password"] = ""
-    client.async_get_cameras = AsyncMock(return_value=cameras)
-
-    await setup_mock_motioneye_config_entry(
-        hass, config_entry=config_entry, client=client
-    )
-    await hass.async_block_till_done()
-
-    await async_get_mjpeg_stream(hass, MockRequest(b"", "test"), TEST_CAMERA_ENTITY_ID)
-    assert authorization == "Basic dXNlcjpwYXNzd29yZA=="
+    assert authorization == "Basic c3VydmVpbGxhbmNlX3VzZXJuYW1lOmdsb2JhbF9wYXNzd29yZA=="
 
 
 async def test_stream_auth_header_cleared_when_auth_disabled(
